@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"testing"
 	"time"
+
+	"istio.io/istio/pkg/test/framework"
 
 	"istio.io/istio/pkg/test/echo/common/response"
 	"istio.io/istio/pkg/test/util/retry"
@@ -33,6 +34,10 @@ type TestCase struct {
 	ExpectAllowed bool
 	Jwt           string
 	Headers       map[string]string
+	// Indicates whether a test should be run in the multicluster environment.
+	// This is a temporary flag during the converting tests into multicluster supported.
+	// TODO: Remove this flag when all tests support multicluster
+	SkippedForMulticluster bool
 }
 
 func getError(req connection.Checker, expect, actual string) error {
@@ -73,6 +78,9 @@ func (tc TestCase) CheckRBACRequest() error {
 		if err != nil {
 			return getError(req, "allow with code 200", fmt.Sprintf("error: %v", err))
 		}
+		if req.DestClusters.IsMulticluster() {
+			return resp.CheckReachedClusters(req.DestClusters)
+		}
 	} else {
 		if strings.HasPrefix(req.Options.PortName, "tcp") || req.Options.PortName == "grpc" {
 			expectedErrMsg := "EOF" // TCP deny message.
@@ -102,7 +110,7 @@ func (tc TestCase) CheckRBACRequest() error {
 	return nil
 }
 
-func RunRBACTest(t *testing.T, cases []TestCase) {
+func RunRBACTest(ctx framework.TestContext, cases []TestCase) {
 	for _, tc := range cases {
 		want := "deny"
 		if tc.ExpectAllowed {
@@ -115,8 +123,8 @@ func RunRBACTest(t *testing.T, cases []TestCase) {
 			tc.Request.Options.PortName,
 			tc.Request.Options.Path,
 			want)
-		t.Run(testName, func(t *testing.T) {
-			retry.UntilSuccessOrFail(t, tc.CheckRBACRequest,
+		ctx.NewSubTest(testName).Run(func(ctx framework.TestContext) {
+			retry.UntilSuccessOrFail(ctx, tc.CheckRBACRequest,
 				retry.Delay(250*time.Millisecond), retry.Timeout(30*time.Second))
 		})
 	}
